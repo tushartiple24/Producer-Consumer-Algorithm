@@ -1,0 +1,21 @@
+SERVER//SYNC ARCHITECTURE
+
+15 CLIENT PRODUCER THREADS   (Producer.cpp)
+        |  wait(empty) -> lock(queue mutex) -> insert -> unlock -> signal(full)
+        v
+10-SLOT BOUNDED REQUEST BUFFER   (BoundedBuffer.cpp)
+        |  wait(full) -> lock(queue mutex) -> remove -> unlock -> signal(empty)
+        v
+3 SERVER CONSUMER / WORKER THREADS   (Consumer.cpp)
+        |  resource mutex (safe mode) / no lock (race demo)
+        v
+SHARED APPLICATION RESOURCE: tickets   (SharedResource.cpp)
+        |
+        v
+HTTP RESPONSE (200 OK / 409 Conflict)
+
+Synchronization:
+  empty semaphore (free slots, starts at capacity)
+  full  semaphore (queued requests, starts at 0)
+  queue mutex     (protects the std::queue)
+  resource mutex  (protects the ticket read-check-write; removed in unsafe mode)

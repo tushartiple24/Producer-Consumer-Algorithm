@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SERVER//SYNC — OS Synchronization Simulator</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">◆ SERVER//SYNC</div>
+    <nav>
+      <a href="#overview">Overview</a>
+      <a href="#simulation">Simulation</a>
+      <a href="#race">Race Condition</a>
+      <a href="#theory">Theory</a>
+    </nav>
+    <button id="themeBtn" class="icon-btn" aria-label="Toggle dark mode">◐</button>
+  </header>
+
+  <main>
+    <section id="overview" class="hero">
+      <div class="eyebrow">OPERATING SYSTEMS · PROCESS SYNCHRONIZATION</div>
+      <h1>Watch concurrent requests flow.</h1>
+      <p>This simulator models producer–consumer synchronization in a bounded web-server request queue, with buffer-full and buffer-empty conditions, worker concurrency, a real race-condition experiment and results measured from the run. Pause, resume, slow down, speed up or step one event at a time.</p>
+      <div class="hero-actions">
+        <button class="primary" id="heroStart">Run default scenario</button>
+        <a class="secondary" href="#simulation">Open simulator</a>
+      </div>
+    </section>
+
+    <section class="cards">
+      <article><span>01</span><h3>PRODUCER</h3><p>15 client threads generate HTTP-like requests.</p></article>
+      <article><span>02</span><h3>BUFFER</h3><p>A bounded queue holds a maximum of 10 requests.</p></article>
+      <article><span>03</span><h3>CONSUMER</h3><p>3 server workers remove and process requests.</p></article>
+      <article><span>04</span><h3>RACE CONDITION</h3><p>Unsynchronized shared-state access can produce inconsistent results.</p></article>
+    </section>
+
+    <section id="simulation" class="section">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">01 · PRODUCER–CONSUMER</div>
+          <h2>Server request simulation</h2>
+        </div>
+        <div class="status-pill" id="statusPill">IDLE</div>
+      </div>
+
+      <div class="grid two">
+        <aside class="panel">
+          <h3>Simulation configuration</h3>
+          <label>Clients / Producers<input id="clients" type="number" min="1" max="100" value="15"></label>
+          <label>Buffer capacity<input id="capacity" type="number" min="1" max="20" value="10"></label>
+          <label>Server workers<input id="workers" type="number" min="1" max="10" value="3"></label>
+          <label>Request processing time (ms)<input id="processing" type="number" min="50" max="3000" value="600"></label>
+          <label>Request arrival / burst delay (ms)<input id="arrival" type="number" min="0" max="1000" value="30"></label>
+          <label>Tickets in stock (shared resource)<input id="tickets" type="number" min="0" max="20" value="1"></label>
+          <label class="toggle-row">Synchronization
+            <select id="syncMode"><option value="safe">ON — synchronized (mutex)</option><option value="unsafe">OFF — unsynchronized</option></select>
+          </label>
+          <div class="actions">
+            <button class="primary" id="runBtn">Start Simulation</button>
+            <button class="secondary" id="resetBtn">Reset</button>
+            <button class="secondary" id="defaultBtn">Load Default Scenario</button>
+          </div>
+          <p class="hint" id="cfgHint"></p>
+        </aside>
+
+        <div class="panel">
+          <div class="panel-title"><h3>Live status</h3><span id="simTime">0.0s</span></div>
+
+          <div class="transport">
+            <button class="secondary" id="pauseBtn" disabled>⏸ Pause</button>
+            <button class="secondary" id="stepBtn" disabled>⏭ Step</button>
+            <div class="speed-box">
+              <span class="muted">Speed</span>
+              <input id="speedRange" type="range" min="0.25" max="16" step="0.25" value="1" disabled>
+              <b id="speedVal">1×</b>
+            </div>
+          </div>
+          <p class="transport-hint">Pause freezes the run · Step advances one event at a time (pause first) · 0.25× = slow motion, 16× = fast forward. Time shown is <b>server time</b>, which is frozen while paused.</p>
+
+          <div class="metrics">
+            <div><b id="mGenerated">0</b><small>Generated</small></div>
+            <div><b id="mProcessed">0</b><small>Processed</small></div>
+            <div><b id="mBuffer">0 / 10</b><small>Buffer</small></div>
+            <div><b id="mWaiting">0</b><small>Producers waiting</small></div>
+            <div><b id="mFull">0</b><small>Buffer full events</small></div>
+            <div><b id="mEmpty">0</b><small>Buffer empty events</small></div>
+          </div>
+
+          <div class="buffer-wrap">
+            <div class="label-row"><span>REQUEST BUFFER — a FIFO queue (capacity <b id="bufferCapLbl">10</b>)</span><strong id="bufferLabel">0 / 10</strong></div>
+            <div class="fifo-caption"><span class="front">◀ FRONT — workers take from here (oldest)</span><span class="back">BACK — new requests are inserted here ▶</span></div>
+            <div id="buffer" class="buffer"></div>
+            <div id="bufferBanner" class="banner" hidden></div>
+            <div class="buffer-legend">
+              <span><i class="sw post"></i>POST /purchase</span>
+              <span><i class="sw get"></i>GET</span>
+              <span><i class="sw new"></i>NEW — just inserted</span>
+              <span><i class="sw empty-sw"></i>free slot</span>
+            </div>
+            <div id="waitingRow" class="waiting-row"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid two lower">
+        <div class="panel">
+          <div class="panel-title"><h3>Server workers</h3><span>Consumers</span></div>
+          <div id="workersView" class="workers"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-title"><h3>Synchronization state</h3><span>Live</span></div>
+          <div class="sems">
+            <div><b id="emptySem">10</b><span>empty (free slots)</span></div>
+            <div><b id="fullSem">0</b><span>full (queued requests)</span></div>
+            <div><b id="mutexState">UNLOCKED</b><span>queue mutex</span></div>
+          </div>
+          <h4 class="sub">Server execution timeline</h4>
+          <p class="explainer">A Gantt chart over <b>server time</b>. Each row is one worker: a colored block means the worker was <b>processing that request</b> during that time; <b>hatched</b> means <b>blocked</b> — waiting for a request (buffer empty) or for the queue mutex. Blocks line up with the time axis above, so you can see exactly who ran when and when threads overlapped.</p>
+          <div class="timeline-scale" id="timelineScale"></div>
+          <div class="timeline" id="timeline"></div>
+          <div class="timeline-legend">
+            <span><i class="sw t-ok"></i>processed (HTTP 200)</span>
+            <span><i class="sw t-rej"></i>rejected (HTTP 409)</span>
+            <span><i class="sw t-block"></i>blocked / waiting</span>
+            <span><i class="sw t-post"></i>purchase (POST) handled</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel log-panel">
+        <div class="panel-title"><h3>Live event log</h3><button class="text-btn" id="clearLog">Clear</button></div>
+        <pre id="log"></pre>
+      </div>
+
+      <div class="narrator" id="narrator">Press <b>Start Simulation</b> — this line explains every event in plain words while the run unfolds.</div>
+
+      <div class="panel results" id="resultsPanel">
+        <div class="panel-title"><h3>Final statistics</h3><span id="resultsNote">Appears when a run completes</span></div>
+        <div id="stats" class="stat-grid"></div>
+        <div class="charts">
+          <div><h4 class="sub">Worker utilization</h4><div id="utilChart" class="bars"></div></div>
+          <div><h4 class="sub">Queue waiting time per request</h4><div id="waitChart" class="bars vertical"></div></div>
+        </div>
+      </div>
+
+      <div class="panel summary-panel" id="summaryPanel">
+        <div class="panel-title"><h3>What happened in this simulation</h3><span id="summaryNote">Appears when a run completes</span></div>
+        <ol id="summaryList" class="summary-list"></ol>
+      </div>
+    </section>
+
+    <section id="race" class="section">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">02 · RACE CONDITION</div>
+          <h2>Shared-resource experiment</h2>
+        </div>
+      </div>
+      <div class="race-layout">
+        <div class="panel race-visual">
+          <div class="resource">AVAILABLE TICKETS <strong id="ticketValue">1</strong><small id="soldValue">Tickets sold: 0</small></div>
+          <div class="race-workers">
+            <div class="race-worker">Worker 1<div id="raceW1">IDLE</div></div>
+            <div class="race-worker">Worker 2<div id="raceW2">IDLE</div></div>
+          </div>
+          <div class="race-result" id="raceResult">Run the experiment to compare unsafe and safe access.</div>
+          <div class="actions">
+            <button class="danger" id="raceUnsafe">Run without mutex</button>
+            <button class="primary" id="raceSafe">Run with mutex</button>
+          </div>
+          <pre id="raceTrace" class="trace"></pre>
+        </div>
+        <div class="panel">
+          <h3>Why this is a race condition</h3>
+          <p>Two consumers can read the same shared state before either writes the update. The final result depends on thread interleaving. A mutex makes the read–check–write sequence one critical section, so only one worker can inspect and modify the shared resource at a time.</p>
+          <div class="comparison">
+            <div><b>Unsafe</b><span>Both workers read 1 and both complete a purchase: 2 tickets sold from a stock of 1 (lost update).</span></div>
+            <div><b>Safe</b><span>One worker purchases the last ticket; the other waits for the mutex, then observes 0 and is rejected.</span></div>
+          </div>
+          <p class="note"><b>Not a race condition:</b> the five extra clients that wait when the 10-slot buffer is full. They hit the bounded-buffer condition and must block, retry or be rejected. A race condition occurs separately, when concurrent workers touch shared application state without synchronization.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="theory" class="section">
+      <div class="eyebrow">03 · THEORY</div>
+      <h2>Concept map</h2>
+
+      <div class="panel diagram-panel">
+        <div class="diagram-wrap">
+          <svg id="conceptMap" viewBox="0 0 900 560" role="img" aria-label="Producer–consumer concept map">
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" class="arrow-head"></path>
+              </marker>
+              <marker id="arrowDim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" class="arrow-head dim"></path>
+              </marker>
+            </defs>
+
+            <!-- channel: producers -->
+            <text x="80" y="52" class="dg-title">PRODUCERS — clients</text>
+            <g class="dg-node dg-producer">
+              <rect x="30" y="66" width="120" height="46" rx="9"></rect>
+              <text x="90" y="85" text-anchor="middle">Client 1 … 15</text>
+              <text x="90" y="102" text-anchor="middle" class="dg-small">generate requests</text>
+            </g>
+            <line x1="150" y1="89" x2="330" y2="240" class="dg-flow" marker-end="url(#arrow)"></line>
+            <text x="215" y="150" class="dg-lbl">① produce →</text>
+
+            <!-- buffer (center) -->
+            <g class="dg-node dg-buffer">
+              <rect x="335" y="180" width="230" height="120" rx="12"></rect>
+              <text x="450" y="208" text-anchor="middle" class="dg-title">BOUNDED BUFFER</text>
+              <g class="dg-slots">
+                <rect x="355" y="222" width="32" height="26" rx="4"></rect>
+                <rect x="392" y="222" width="32" height="26" rx="4"></rect>
+                <rect x="429" y="222" width="32" height="26" rx="4" class="dg-full"></rect>
+                <rect x="466" y="222" width="32" height="26" rx="4" class="dg-full"></rect>
+                <rect x="503" y="222" width="32" height="26" rx="4" class="dg-full"></rect>
+              </g>
+              <text x="450" y="272" text-anchor="middle" class="dg-small">FIFO queue · fixed capacity · shared by all threads</text>
+            </g>
+            <text x="345" y="165" class="dg-lbl">② insert (needs mutex + free slot)</text>
+
+            <!-- consumers -->
+            <g class="dg-node dg-consumer">
+              <rect x="750" y="180" width="120" height="50" rx="9"></rect>
+              <text x="810" y="200" text-anchor="middle">Worker 1 … 3</text>
+              <text x="810" y="217" text-anchor="middle" class="dg-small">consume requests</text>
+            </g>
+            <line x1="570" y1="240" x2="745" y2="205" class="dg-flow" marker-end="url(#arrow)"></line>
+            <text x="620" y="205" class="dg-lbl">③ remove (needs mutex + full slot)</text>
+
+            <!-- processing + resource -->
+            <g class="dg-node dg-consumer">
+              <rect x="700" y="300" width="170" height="72" rx="9"></rect>
+              <text x="785" y="322" text-anchor="middle">Process request</text>
+              <text x="785" y="340" text-anchor="middle" class="dg-small">e.g. POST /purchase:</text>
+              <text x="785" y="356" text-anchor="middle" class="dg-small">read–check–write tickets</text>
+            </g>
+            <line x1="812" y1="230" x2="790" y2="295" class="dg-flow" marker-end="url(#arrow)"></line>
+
+            <!-- semaphores under buffer -->
+            <g class="dg-node dg-sem">
+              <rect x="335" y="360" width="108" height="46" rx="9"></rect>
+              <text x="389" y="379" text-anchor="middle">semaphore empty</text>
+              <text x="389" y="396" text-anchor="middle" class="dg-small">= free slots</text>
+            </g>
+            <g class="dg-node dg-sem">
+              <rect x="457" y="360" width="108" height="46" rx="9"></rect>
+              <text x="511" y="379" text-anchor="middle">semaphore full</text>
+              <text x="511" y="396" text-anchor="middle" class="dg-small">= queued items</text>
+            </g>
+            <line x1="389" y1="355" x2="400" y2="305" class="dg-tie" marker-end="url(#arrowDim)"></line>
+            <line x1="511" y1="355" x2="500" y2="305" class="dg-tie" marker-end="url(#arrowDim)"></line>
+            <text x="450" y="430" text-anchor="middle" class="dg-small">producers wait on <tspan class="dg-code">empty</tspan> when it is 0 (buffer full) · consumers wait on <tspan class="dg-code">full</tspan> when it is 0 (buffer empty)</text>
+
+            <!-- mutex -->
+            <g class="dg-node dg-mutex">
+              <rect x="60" y="360" width="180" height="60" rx="9"></rect>
+              <text x="150" y="383" text-anchor="middle">MUTEX — queue lock</text>
+              <text x="150" y="402" text-anchor="middle" class="dg-small">1 thread inside at a time</text>
+            </g>
+            <line x1="245" y1="375" x2="330" y2="275" class="dg-tie" marker-end="url(#arrowDim)"></line>
+            <g class="dg-node dg-mutex">
+              <rect x="640" y="420" width="200" height="60" rx="9"></rect>
+              <text x="740" y="443" text-anchor="middle">MUTEX — resource lock</text>
+              <text x="740" y="462" text-anchor="middle" class="dg-small">guards read–check–write</text>
+            </g>
+            <line x1="780" y1="372" x2="755" y2="415" class="dg-tie" marker-end="url(#arrowDim)"></line>
+            <text x="150" y="445" text-anchor="middle" class="dg-small">code inside the lock =</text>
+            <text x="150" y="462" text-anchor="middle" class="dg-small">CRITICAL SECTION (⑧)</text>
+
+            <!-- blocking arcs -->
+            <path d="M 90 112 C 60 200, 90 300, 130 355" class="dg-block" marker-end="url(#arrowDim)"></path>
+            <text x="55" y="240" class="dg-lbl block-lbl">④ blocked when buffer FULL</text>
+            <path d="M 855 230 C 880 300, 860 440, 700 480" class="dg-block" marker-end="url(#arrowDim)"></path>
+            <text x="862" y="330" class="dg-lbl block-lbl" transform="rotate(90 862 330)">⑤ blocked when buffer EMPTY</text>
+
+            <!-- results -->
+            <g class="dg-node dg-result">
+              <rect x="640" y="510" width="200" height="40" rx="9"></rect>
+              <text x="740" y="535" text-anchor="middle">HTTP response → client</text>
+            </g>
+            <line x1="740" y1="480" x2="740" y2="505" class="dg-flow" marker-end="url(#arrow)"></line>
+            <text x="600" y="500" class="dg-lbl">⑥ respond</text>
+
+            <!-- race -->
+            <g class="dg-node dg-race">
+              <rect x="60" y="490" width="230" height="56" rx="9"></rect>
+              <text x="175" y="512" text-anchor="middle">RACE CONDITION ⑨</text>
+              <text x="175" y="530" text-anchor="middle" class="dg-small">two workers read before either writes</text>
+            </g>
+            <line x1="300" y1="512" x2="330" y2="500" class="dg-tie" marker-end="url(#arrowDim)"></line>
+            <text x="352" y="508" class="dg-lbl">no resource mutex ⇒ lost update</text>
+          </svg>
+        </div>
+        <p class="diagram-hint">Follow the numbers ①–⑨: requests are <b>produced</b> ①, <b>inserted</b> into the bounded buffer ②, <b>removed</b> ③ and <b>processed</b> by consumers, with <b>blocking</b> ④⑤ when the buffer is full or empty, <b>mutexes</b> guarding the queue and the ticket resource, and a <b>race condition</b> ⑨ possible when the resource lock is off. The same flow runs live in the simulation above.</p>
+      </div>
+
+      <div class="theory-grid">
+        <div class="panel"><h3>① Producer</h3><p>A client thread that generates an HTTP-like request and tries to place it into the bounded request queue.</p></div>
+        <div class="panel"><h3>② Bounded buffer</h3><p>A shared request queue with fixed capacity (10 by default). Full and empty states make threads block.</p></div>
+        <div class="panel"><h3>③ Consumer</h3><p>A server worker thread that removes a request from the queue, processes it and sends the response.</p></div>
+        <div class="panel"><h3>④⑤ Semaphore</h3><p>A counter with blocking wait/signal. <code>empty</code> counts free slots (starts at 10) and <code>full</code> counts queued requests (starts at 0).</p></div>
+        <div class="panel"><h3>Mutex</h3><p>A lock giving one thread at a time access. It guards the queue itself and, separately, the shared application resource.</p></div>
+        <div class="panel"><h3>Critical section</h3><p>Code that touches shared state and must not run concurrently, such as queue insert/remove or the ticket read–check–write.</p></div>
+        <div class="panel"><h3>④ Buffer full</h3><p>All slots are occupied. Producers block on <code>empty</code> until a consumer frees a slot. This is flow control, <b>not</b> a race condition.</p></div>
+        <div class="panel"><h3>⑤ Buffer empty</h3><p>No pending requests. Consumers block on <code>full</code> until a producer inserts one.</p></div>
+        <div class="panel"><h3>⑨ Race condition</h3><p>The result depends on thread timing because shared state is accessed concurrently without synchronization (for example, a lost update).</p></div>
+        <div class="panel"><h3>Mutual exclusion</h3><p>The guarantee that at most one thread is inside a critical section at a time, provided by the mutex.</p></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>SERVER//SYNC · Operating Systems Synchronization Lab · browser visualizer (the native C++ engine lives in <code>simulator/</code>)</footer>
+  <script src="js/visualization.js"></script>
+  <script src="js/timeline.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/explain.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

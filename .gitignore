@@ -1,0 +1,9 @@
+build/
+simulator/build/
+simulator/server_sync
+*.exe
+*.obj
+*.o
+.vs/
+.freebuff/
+PROMPT_FOR_OTHER_AI.md
